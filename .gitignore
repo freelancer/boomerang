@@ -1,7 +1,6 @@
 *.gz
 *.swp
 /boomerang-*.js
-build/*
 *.log
 *.diff
 .project
@@ -11,7 +10,7 @@ tests/coverage/
 tests/results/*
 tests/pages/*
 node_modules/
-build/
+tests/build/*
 tests/server/env.json
 npm-debug.log
 /tests/e2e/e2e.json

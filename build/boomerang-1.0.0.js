@@ -3641,7 +3641,7 @@ BOOMR_check_doc_domain();
 
 
 
-	delete BOOMR_start;
+	BOOMR_start = undefined;
 
 	/**
 	 * @global
@@ -3660,7 +3660,7 @@ BOOMR_check_doc_domain();
 		 * @memberof BOOMR
 		 */
 		boomr.t_lstart = BOOMR_lstart;
-		delete BOOMR_lstart;
+		BOOMR_lstart = undefined;
 	}
 	else if (typeof BOOMR.window.BOOMR_lstart === "number") {
 		boomr.t_lstart = BOOMR.window.BOOMR_lstart;

@@ -189,7 +189,7 @@ BOOMR_check_doc_domain();
 	 *
 	 * @memberof BOOMR
 	 */
-	BOOMR.version = "1.621.custom-1";
+	BOOMR.version = "1.0.0";
 
 	/**
 	 * The main document window.
@@ -2004,6 +2004,19 @@ BOOMR_check_doc_domain();
 				    /\[native code\]/.test(String(fn));
 			}
 
+			/* BEGIN_DEBUG */
+			, forEach: function(array, fn, thisArg) {
+				if (!BOOMR.utils.isArray(array) || typeof fn !== "function") {
+					return;
+				}
+				var length = array.length;
+				for (var i = 0; i < length; i++) {
+					if (array.hasOwnProperty(i)) {
+						fn.call(thisArg, array[i], i, array);
+					}
+				}
+			}
+			/* END_DEBUG */
 
 		}, // closes `utils`
 
@@ -2457,6 +2470,13 @@ BOOMR_check_doc_domain();
 		setImmediate: function(fn, data, cb_data, cb_scope) {
 			var cb, cstack;
 
+			/* BEGIN_DEBUG */
+			// DEBUG: This is to help debugging, we'll see where setImmediate calls were made from
+			if (typeof Error !== "undefined") {
+				cstack = new Error();
+				cstack = cstack.stack ? cstack.stack.replace(/^Error/, "Called") : undefined;
+			}
+			/* END_DEBUG */
 
 			cb = function() {
 				fn.call(cb_scope || null, data, cb_data || {}, cstack);
@@ -3635,13 +3655,23 @@ BOOMR_check_doc_domain();
 			}
 		}
 
+		/* BEGIN_DEBUG */,
+		/**
+		 * Sets the list of allowed Beacon URLs
+		 *
+		 * @param {string[]} urls List of string regular expressions
+		 */
+		setBeaconUrlsAllowed: function(urls) {
+			impl.beacon_urls_allowed = urls;
+		}
+		/* END_DEBUG */
 	};
 
 	boomr.url = boomr.utils.getMyURL();
 
 
 
-	delete BOOMR_start;
+	BOOMR_start = undefined;
 
 	/**
 	 * @global
@@ -3660,7 +3690,7 @@ BOOMR_check_doc_domain();
 		 * @memberof BOOMR
 		 */
 		boomr.t_lstart = BOOMR_lstart;
-		delete BOOMR_lstart;
+		BOOMR_lstart = undefined;
 	}
 	else if (typeof BOOMR.window.BOOMR_lstart === "number") {
 		boomr.t_lstart = BOOMR.window.BOOMR_lstart;
@@ -3826,11 +3856,133 @@ BOOMR_check_doc_domain();
 		}
 	}());
 
+	/* BEGIN_DEBUG */
+	/*
+	 * This block reports on overridden functions on `window` and properties on `document` using `BOOMR.warn()`.
+	 * To enable, add `overridden` with a value of `true` to the query string.
+	 */
+	(function() {
+		/**
+		 * Checks a window for overridden functions.
+		 *
+		 * @param {Window} win The window object under test
+		 *
+		 * @returns {Array} Array of overridden function names
+		 */
+		BOOMR.checkWindowOverrides = function(win) {
+			if (!Object.getOwnPropertyNames) {
+				return [];
+			}
+
+			var freshWindow, objects, overridden = [];
+			function setup() {
+				var iframe = d.createElement("iframe");
+				iframe.style.display = "none";
+				iframe.src = "javascript:false"; // eslint-disable-line no-script-url
+				d.getElementsByTagName("script")[0].parentNode.appendChild(iframe);
+				freshWindow = iframe.contentWindow;
+				objects = Object.getOwnPropertyNames(freshWindow);
+			}
+
+			function teardown() {
+				iframe.parentNode.removeChild(iframe);
+			}
+
+			function checkWindowObject(objectKey) {
+				if (isNonNative(objectKey)) {
+					overridden.push(objectKey);
+				}
+			}
+
+			function isNonNative(key) {
+				var split = key.split("."), fn = win, results = [];
+				while (fn && split.length) {
+					try {
+						fn = fn[split.shift()];
+					}
+					catch (e) {
+						return false;
+					}
+				}
+				return typeof fn === "function" && !isNativeFunction(fn, key);
+			}
+
+			function isNativeFunction(fn, str) {
+				if (str === "console.assert" ||
+					str === "Function.prototype" ||
+					str.indexOf("onload") >= 0 ||
+					str.indexOf("onbeforeunload") >= 0 ||
+					str.indexOf("onerror") >= 0 ||
+					str.indexOf("onload") >= 0 ||
+					str.indexOf("NodeFilter") >= 0) {
+					return true;
+				}
+				return fn.toString &&
+					!fn.hasOwnProperty("toString") &&
+					/\[native code\]/.test(String(fn));
+			}
+
+			setup();
+			for (var objectIndex = 0; objectIndex < objects.length; objectIndex++) {
+				var objectKey = objects[objectIndex];
+				if (objectKey === "window" ||
+					objectKey === "self" ||
+					objectKey === "top" ||
+					objectKey === "parent" ||
+					objectKey === "frames") {
+					continue;
+				}
+				if (freshWindow[objectKey] &&
+					(typeof freshWindow[objectKey] === "object" || typeof freshWindow[objectKey] === "function")) {
+					checkWindowObject(objectKey);
+
+					var propertyNames = [];
+					try {
+						propertyNames = Object.getOwnPropertyNames(freshWindow[objectKey]);
+					}
+					catch (e) {;}
+					for (var i = 0; i < propertyNames.length; i++) {
+						checkWindowObject([objectKey, propertyNames[i]].join("."));
+					}
+
+					if (freshWindow[objectKey].prototype) {
+						propertyNames = Object.getOwnPropertyNames(freshWindow[objectKey].prototype);
+						for (var i = 0; i < propertyNames.length; i++) {
+							checkWindowObject([objectKey, "prototype", propertyNames[i]].join("."));
+						}
+					}
+				}
+			}
+			return overridden;
+		};
+
+		/**
+		 * Checks a document for overridden properties.
+		 *
+		 * @param {HTMLDocument} doc The document object under test
+		 *
+		 * @returns {Array} Array of overridden properties names
+		 */
+		BOOMR.checkDocumentOverrides = function(doc) {
+			return BOOMR.utils.arrayFilter(["readyState", "domain", "hidden", "URL", "cookie"], function(key) {
+				return doc.hasOwnProperty(key);
+			});
+		};
+
+		if (BOOMR.utils.getQueryParamValue("overridden") === "true" && w && w.Object && Object.getOwnPropertyNames) {
+			var overridden = []
+				.concat(BOOMR.checkWindowOverrides(w))
+				.concat(BOOMR.checkDocumentOverrides(d));
+			if (overridden.length > 0) {
+				BOOMR.warn("overridden: " + overridden.sort());
+			}
+		}
+	})();
+	/* END_DEBUG */
 
 	dispatchEvent("onBoomerangLoaded", { "BOOMR": BOOMR }, true);
 
 }(window));
-
 
 // end of boomerang beaconing section
 
@@ -6327,6 +6479,9 @@ BOOMR_check_doc_domain();
 			impl.captureXhrRequestResponse = enabled;
 		}
 
+		/* BEGIN_DEBUG */,
+		matchesAlwaysSendXhr: matchesAlwaysSendXhr
+		/* END_DEBUG */
 	};
 
 	/**
@@ -9029,7 +9184,6 @@ BOOMR_check_doc_domain();
 	};
 
 }(window));
-
 // End of RT plugin
 
 /**
@@ -10633,6 +10787,98 @@ BOOMR_check_doc_domain();
 		}
 	}
 
+	/* BEGIN_DEBUG */
+	/**
+	 * Decompresses size information back into the specified resource
+	 *
+	 * @param {string} compressed Compressed string
+	 * @param {ResourceTiming} resource ResourceTiming object
+	 */
+	function decompressSize(compressed, resource) {
+		var split, i;
+
+		if (typeof resource === "undefined") {
+			resource = {};
+		}
+
+		split = compressed.split(",");
+
+		for (i = 0; i < split.length; i++) {
+			if (split[i] === "_") {
+				// special non-delta value
+				split[i] = 0;
+			}
+			else {
+				// fill in missing numbers
+				if (split[i] === "") {
+					split[i] = 0;
+				}
+
+				// convert back from Base36
+				split[i] = parseInt(split[i], 36);
+
+				if (i > 0) {
+					// delta against first number
+					split[i] += split[0];
+				}
+			}
+		}
+
+		// fill in missing
+		if (split.length === 1) {
+			// transferSize is a delta from encodedSize
+			split.push(split[0]);
+		}
+
+		if (split.length === 2) {
+			// decodedSize is a delta from encodedSize
+			split.push(split[0]);
+		}
+
+		// re-add attributes to the resource
+		resource.encodedBodySize = split[0];
+		resource.transferSize = split[1];
+		resource.decodedBodySize = split[2];
+
+		return resource;
+	}
+
+	/**
+	 * Decompress compressed timepoints into a timepoint object with painted and finalized pixel counts
+	 * @param {string} comp The compressed timePoint object returned by getOptimizedTimepoints
+	 * @returns {object} An object in the form { <timePoint>: [ <pixel count>, <finalized pixel count>], ... }
+	 */
+	function decompressTimePoints(comp) {
+		var result = {}, timePoints, i, split, prevs = [0, 0, 0];
+
+		timePoints = comp.split("!");
+
+		for (i = 0; i < timePoints.length; i++) {
+			split = timePoints[i]
+				.replace(/^~/, "Infinity~")
+				.replace("-", "~0~")
+				.split("~")
+				.map(function(v, j) {
+					v = (v === "Infinity" ? Infinity : parseInt(v, 36));
+
+					if (j === 2) {
+						v = prevs[1] - v;
+					}
+					else {
+						v = v + prevs[j];
+					}
+
+					prevs[j] = v;
+
+					return v;
+				});
+
+			result[split[0]] = [ split[1], split[2] || split[1] ];
+		}
+
+		return result;
+	}
+	/* END_DEBUG */
 
 	/**
 	 * Trims the URL according to the specified URL trim patterns,
@@ -11287,6 +11533,38 @@ BOOMR_check_doc_domain();
 	 * @param {Integer} key key into the compressed lookup
 	 * @returns {Object} decompressed resource timing entry (name, duration, description)
 	 */
+	/* BEGIN_DEBUG */
+	function decompressServerTiming(lookup, key) {
+		var split = key.split(":");
+		var duration = Number(split[0]);
+		var entryIndex = 0, descriptionIndex = 0;
+
+		if (split.length > 1) {
+			var identity = split[1].split(".");
+			if (identity[0] !== "") {
+				entryIndex = Number(identity[0]);
+			}
+			if (identity.length > 1) {
+				descriptionIndex = Number(identity[1]);
+			}
+		}
+
+		var name, description = "";
+		if (Array.isArray(lookup[entryIndex])) {
+			name = lookup[entryIndex][0];
+			description = lookup[entryIndex][1 + descriptionIndex] || "";
+		}
+		else {
+			name = lookup[entryIndex];
+		}
+
+		return {
+			name: name,
+			duration: duration,
+			description: description
+		};
+	}
+	/* END_DEBUG */
 
 	impl = {
 		complete: false,
@@ -11502,6 +11780,38 @@ BOOMR_check_doc_domain();
 		//
 		// Test Exports (only for debug)
 		//
+		/* BEGIN_DEBUG */,
+		trimTiming: trimTiming,
+		convertToTrie: convertToTrie,
+		optimizeTrie: optimizeTrie,
+		findPerformanceEntriesForFrame: findPerformanceEntriesForFrame,
+		toBase36: toBase36,
+		getVisibleEntries: getVisibleEntries,
+		reduceFetchStarts: reduceFetchStarts,
+		compressSize: compressSize,
+		decompressSize: decompressSize,
+		trimUrl: trimUrl,
+		getResourceLatestTime: getResourceLatestTime,
+		mergePixels: mergePixels,
+		countPixels: countPixels,
+		getOptimizedTimepoints: getOptimizedTimepoints,
+		decompressTimePoints: decompressTimePoints,
+		accumulateServerTimingEntries: accumulateServerTimingEntries,
+		compressServerTiming: compressServerTiming,
+		indexServerTiming: indexServerTiming,
+		identifyServerTimingEntry: identifyServerTimingEntry,
+		decompressServerTiming: decompressServerTiming,
+		SPECIAL_DATA_PREFIX: SPECIAL_DATA_PREFIX,
+		SPECIAL_DATA_DIMENSION_TYPE: SPECIAL_DATA_DIMENSION_TYPE,
+		SPECIAL_DATA_SIZE_TYPE: SPECIAL_DATA_SIZE_TYPE,
+		SPECIAL_DATA_SCRIPT_ATTR_TYPE: SPECIAL_DATA_SCRIPT_ATTR_TYPE,
+		SPECIAL_DATA_LINK_ATTR_TYPE: SPECIAL_DATA_LINK_ATTR_TYPE,
+		ASYNC_ATTR: ASYNC_ATTR,
+		DEFER_ATTR: DEFER_ATTR,
+		LOCAT_ATTR: LOCAT_ATTR,
+		INITIATOR_TYPES: INITIATOR_TYPES,
+		REL_TYPES: REL_TYPES
+		/* END_DEBUG */
 	};
 
 }());

@@ -63,7 +63,7 @@
  * time.  We also declare it without `var` so that we can later
  * `delete` it.  This is the only way that works on Internet Explorer.
  */
-BOOMR_start = new Date().getTime();
+window.BOOMR_start = new Date().getTime();
 
 /**
  * @function
